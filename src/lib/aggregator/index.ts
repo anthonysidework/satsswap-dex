@@ -1,14 +1,16 @@
 import type { QuoteParams, AggregatedQuote, DexQuote, DexAdapter } from './types'
 import { MOCK_ADAPTERS } from './mock'
 import { OKXAdapter } from './adapters/okx'
+import { SatsSwapAdapter } from './adapters/satsswap'
 
 /**
  * Returns all active adapters.
+ * SatsSwap native order book is first — preferred when it has liquidity.
  * OKX uses the public exchange market API (no key needed) — always included.
  * Mock adapters are always included as fallback/comparison options.
  */
 function getAdapters(): DexAdapter[] {
-  return [OKXAdapter, ...MOCK_ADAPTERS]
+  return [SatsSwapAdapter, OKXAdapter, ...MOCK_ADAPTERS]
 }
 
 export async function getAggregatedQuote(params: QuoteParams): Promise<AggregatedQuote> {

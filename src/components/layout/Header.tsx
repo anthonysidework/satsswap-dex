@@ -9,7 +9,8 @@ import { LogOut, ChevronDown } from 'lucide-react'
 import { useState } from 'react'
 
 const NAV_LINKS = [
-  { href: '/swap', label: 'Swap' },
+  { href: '/dex', label: 'DEX' },
+  { href: '/swap', label: 'Aggregator' },
   { href: '/explore', label: 'Explore' },
   { href: '/portfolio', label: 'Portfolio' },
 ]

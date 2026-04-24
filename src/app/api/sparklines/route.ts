@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server'
 
+export const dynamic = 'force-dynamic'
+
 // One CoinGecko call returns 7d sparkline for all tracked tokens
 const ALL_CG_IDS = [
   'bitcoin',
