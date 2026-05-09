@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getOrderById, updateOrderStatus } from '@/lib/db/orders'
 import { completeTakerPsbt } from '@/lib/psbt/builder'
-import { getUtxos } from '@/lib/psbt/utxo'
+import { getUtxos, getTxOutput } from '@/lib/psbt/utxo'
 import { getNetworkFees } from '@/lib/fees'
 
 export const dynamic = 'force-dynamic'
@@ -37,11 +37,9 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
 }
 
 /**
- * POST /api/orders/[id]/take is handled in the nested route file.
- * This file handles the order resource itself (GET, DELETE).
+ * POST /api/orders/[id] — taker fetches the completed PSBT to sign and broadcast.
+ * Does NOT mark the order as filled — the client must call PATCH after a successful broadcast.
  */
-
-/** POST /api/orders/[id] — taker fills the order */
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const body = await req.json()
@@ -61,49 +59,81 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: 'Order has expired' }, { status: 410 })
     }
 
-    // Fetch buyer UTXOs and network fees in parallel
     const [buyerUtxos, fees] = await Promise.all([
       getUtxos(buyerAddress),
       getNetworkFees(),
     ])
 
-    const confirmedUtxos = buyerUtxos
-      .filter((u) => u.status.confirmed)
-      .map((u) => ({
-        txid: u.txid,
-        vout: u.vout,
-        value: u.value,
-        // scriptPubKey is not in the UTXO endpoint — taker's client must provide it
-        // or we'd fetch each TX. For now we expect the client to pass it.
-        scriptPubKey: body.buyerScriptPubKey ?? '',
-      }))
-
+    const confirmedUtxos = buyerUtxos.filter((u) => u.status.confirmed)
     const totalBuyerSats = confirmedUtxos.reduce((s, u) => s + u.value, 0)
+
     if (totalBuyerSats < order.to_amount) {
       return NextResponse.json({ error: 'Insufficient BTC balance' }, { status: 422 })
     }
 
-    // Select just enough UTXOs to cover the ask
+    // Select enough UTXOs to cover ask + estimated fees
     const needed = order.to_amount + Math.ceil(160 * fees.mediumSatPerVb) + 546
     let running = 0
-    const selected = confirmedUtxos.filter((u) => {
+    const selectedRaw = confirmedUtxos.filter((u) => {
       if (running >= needed) return false
       running += u.value
       return true
     })
+
+    if (selectedRaw.length === 0) {
+      return NextResponse.json({ error: 'No confirmed UTXOs' }, { status: 422 })
+    }
+
+    // Fetch scriptPubKey for each selected UTXO from mempool.space
+    const selected = await Promise.all(
+      selectedRaw.map(async (u) => {
+        const output = await getTxOutput(u.txid, u.vout)
+        return { txid: u.txid, vout: u.vout, value: u.value, scriptPubKey: output.scriptpubkey }
+      })
+    )
+
+    // Use the first UTXO's scriptPubKey as the buyer's receive address script.
+    // All UTXOs come from the same address, so any one works.
+    const buyerScriptPubKeyHex = selected[0].scriptPubKey
 
     const { psbtHex, fees: takerFees } = completeTakerPsbt({
       makerPsbtHex: order.psbt_hex,
       buyerAddress,
       buyerPubkey: buyerPubkey ?? '',
       buyerUtxos: selected,
+      buyerScriptPubKeyHex,
       feeRateSatPerVb: fees.mediumSatPerVb,
+      runeId: order.rune_id ?? undefined,
+      runeAmount: order.rune_amount ?? undefined,
     })
 
-    // Mark as filled optimistically — if broadcast fails, maker can re-list
-    await updateOrderStatus(params.id, 'filled')
-
     return NextResponse.json({ psbtHex, fees: takerFees })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error'
+    return NextResponse.json({ error: message }, { status: 500 })
+  }
+}
+
+/**
+ * PATCH /api/orders/[id] — mark order as filled after a successful broadcast.
+ * Called by the taker client after broadcastTx() succeeds.
+ */
+export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const body = await req.json()
+    if (body.status !== 'filled') {
+      return NextResponse.json({ error: 'Only "filled" is accepted via PATCH' }, { status: 400 })
+    }
+
+    const order = await getOrderById(params.id)
+    if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
+
+    // Idempotent — already filled is fine
+    if (order.status === 'open') {
+      await updateOrderStatus(params.id, 'filled')
+    }
+
+    return NextResponse.json({ success: true })
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error'
     return NextResponse.json({ error: message }, { status: 500 })

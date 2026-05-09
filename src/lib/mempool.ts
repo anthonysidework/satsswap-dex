@@ -1,4 +1,22 @@
+import { Transaction } from '@scure/btc-signer'
+import { hex } from '@scure/base'
+
 const MEMPOOL = 'https://mempool.space/api'
+
+/**
+ * Finalize a signed PSBT and extract the raw transaction hex for broadcasting.
+ * Some wallets return a raw TX hex directly (already finalized) — the catch
+ * handles that by passing the value through unchanged.
+ */
+export function finalizeAndExtractTx(signedPsbtHex: string): string {
+  try {
+    const tx = Transaction.fromPSBT(hex.decode(signedPsbtHex))
+    tx.finalize()
+    return hex.encode(tx.extract())
+  } catch {
+    return signedPsbtHex
+  }
+}
 
 export type TxStatus = 'broadcasting' | 'mempool' | 'confirmed' | 'failed'
 

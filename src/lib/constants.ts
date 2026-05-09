@@ -207,3 +207,16 @@ export const WALLET_PROVIDERS: WalletProvider[] = [
 ]
 
 export const SLIPPAGE_OPTIONS = [0.5, 1, 2]
+
+/**
+ * Maps our token IDs (Rune names) to their on-chain Rune IDs ("block:tx").
+ * Required to encode the Runestone OP_RETURN in taker PSBTs.
+ * Source: https://ordinals.com/runes
+ */
+export const TOKEN_RUNE_IDS: Record<string, string> = {
+  'DOG•GO•TO•THE•MOON':  '840000:3',
+  'SATOSHI•NAKAMOTO':    '840000:2',
+  'MAGIC•INTERNET•MONEY': '840000:0',
+  'RSIC•GENESIS•RUNE':   '1:0',
+  'UNCOMMON•GOODS':      '1:1',
+}

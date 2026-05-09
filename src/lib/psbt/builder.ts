@@ -14,15 +14,40 @@
  * signing via the existing useWallet.signPsbt() infrastructure.
  */
 
-import { Transaction, p2wpkh, p2tr } from '@scure/btc-signer'
-import { hex, base64 } from '@scure/base'
+import { Transaction } from '@scure/btc-signer'
+import { hex, bech32, bech32m } from '@scure/base'
 import { getTxOutput } from './utxo'
+import { buildRunestoneScript, parseRuneId } from './runestone'
+
+/**
+ * Decode a native-segwit Bitcoin address into its scriptPubKey bytes.
+ * Supports P2WPKH (bc1q / tb1q) and P2TR (bc1p / tb1p).
+ * Returns null for any other format — use mempool.space as fallback.
+ */
+function addressToScript(address: string): Uint8Array | null {
+  try {
+    if (address.startsWith('bc1q') || address.startsWith('tb1q')) {
+      // P2WPKH: OP_0 <20-byte-pubkey-hash>
+      const { words } = bech32.decode(address as `${string}1${string}`)
+      const hash = bech32.fromWords(words.slice(1)) // strip witness version byte
+      return new Uint8Array([0x00, 0x14, ...hash])
+    }
+    if (address.startsWith('bc1p') || address.startsWith('tb1p')) {
+      // P2TR: OP_1 <32-byte-x-only-key>
+      const { words } = bech32m.decode(address as `${string}1${string}`)
+      const key = bech32m.fromWords(words.slice(1))
+      return new Uint8Array([0x51, 0x20, ...key])
+    }
+  } catch {
+    // malformed address
+  }
+  return null
+}
 
 // Dust limit: 546 sats for P2WPKH, 294 for P2TR
 const DUST_SATS = 546
 // Protocol fee bps (0.15%)
 const PROTOCOL_FEE_BPS = parseInt(process.env.NEXT_PUBLIC_PROTOCOL_FEE_BPS ?? '15')
-const PROTOCOL_FEE_ADDRESS = process.env.NEXT_PUBLIC_PROTOCOL_FEE_ADDRESS ?? ''
 
 export interface MakerPsbtParams {
   /** Address that owns the token UTXO (taproot bc1p… for Runes) */
@@ -47,8 +72,18 @@ export interface TakerPsbtParams {
   buyerPubkey: string
   /** UTXOs the buyer will spend to cover askSats + fees */
   buyerUtxos: Array<{ txid: string; vout: number; value: number; scriptPubKey: string }>
+  /** scriptPubKey hex for buyer's receive address — fetched from mempool.space, not derived locally */
+  buyerScriptPubKeyHex: string
   /** Network fee rate */
   feeRateSatPerVb: number
+  /**
+   * Rune ID string (e.g. "840000:3") — only set for RUNE type orders.
+   * When present, a Runestone OP_RETURN is appended to transfer the Runes
+   * to the buyer's output (index 1). BRC-20 orders leave this undefined.
+   */
+  runeId?: string
+  /** Exact base-unit amount of the Rune being transferred (as BigInt string) */
+  runeAmount?: string
 }
 
 export interface BuiltPsbt {
@@ -58,26 +93,13 @@ export interface BuiltPsbt {
   fees: { networkSats: number; protocolSats: number; totalSats: number }
 }
 
-function addressToScript(address: string): Uint8Array {
-  // P2TR (bc1p…)
-  if (address.startsWith('bc1p') || address.startsWith('tb1p')) {
-    // 32-byte x-only pubkey embedded in the address — we need the scriptPubKey bytes
-    // For display/PSBT purposes we use the raw script; wallet extension handles signing
-    throw new Error(
-      'Use getRawScriptPubKey() via getTxOutput for taproot inputs — do not derive script from address client-side'
-    )
-  }
-  // P2WPKH (bc1q…) — handled by @scure/btc-signer p2wpkh helper
-  throw new Error('Use scriptPubKey fetched from mempool.space for all inputs')
-}
-
 /**
  * Build the maker (seller) side of the PSBT.
  * Returns a partially signed PSBT ready to be stored in the order book.
  * The seller's wallet extension signs input[0].
  */
 export async function buildMakerPsbtTemplate(params: MakerPsbtParams): Promise<BuiltPsbt> {
-  const { sellerAddress, utxoTxid, utxoVout, askSats, feeRateSatPerVb } = params
+  const { utxoTxid, utxoVout, askSats, feeRateSatPerVb } = params
 
   // Fetch the scriptPubKey for the seller's UTXO from mempool.space
   const utxoOutput = await getTxOutput(utxoTxid, utxoVout)
@@ -87,14 +109,17 @@ export async function buildMakerPsbtTemplate(params: MakerPsbtParams): Promise<B
   const estimatedVbytes = 300
   const networkFeeSats = Math.ceil(estimatedVbytes * feeRateSatPerVb)
 
-  // Protocol fee
-  const protocolFeeSats = Math.ceil((askSats * PROTOCOL_FEE_BPS) / 10_000)
+  // Protocol fee — only charged when a valid fee address is configured.
+  // If the address is missing or can't be decoded, no fee is deducted so no sats leak.
+  const feeAddress = process.env.NEXT_PUBLIC_PROTOCOL_FEE_ADDRESS ?? ''
+  const feeScript = feeAddress ? addressToScript(feeAddress) : null
+  const protocolFeeSats = feeScript ? Math.ceil((askSats * PROTOCOL_FEE_BPS) / 10_000) : 0
 
-  // The PSBT template:
-  //   Input 0:  seller's token UTXO (signed by seller)
-  //   Output 0: BTC to seller (askSats minus protocol fee)
-  //   Output 1: protocol fee output (if address configured)
-  //   [Taker will add Input 1 (BTC) and Output 2 (token to buyer)]
+  // PSBT template:
+  //   Input 0:  seller's token UTXO (signed SIGHASH_SINGLE|ANYONECANPAY)
+  //   Output 0: BTC to seller
+  //   Output 1: protocol fee (only when fee address is configured)
+  //   Taker adds: Input 1 (BTC UTXOs), Output 2 (token to buyer), Output 3 (BTC change)
 
   const tx = new Transaction()
 
@@ -102,7 +127,6 @@ export async function buildMakerPsbtTemplate(params: MakerPsbtParams): Promise<B
     txid: utxoTxid,
     index: utxoVout,
     witnessUtxo: { script: inputScript, amount: BigInt(utxoOutput.value) },
-    // Sighash SINGLE|ANYONECANPAY: seller's input/output are locked, taker can add theirs
     sighashType: 0x83, // SIGHASH_SINGLE | SIGHASH_ANYONECANPAY
   })
 
@@ -111,27 +135,11 @@ export async function buildMakerPsbtTemplate(params: MakerPsbtParams): Promise<B
   if (sellerReceiveSats < DUST_SATS) {
     throw new Error('Ask price too low to cover fees')
   }
+  tx.addOutput({ script: inputScript, amount: BigInt(sellerReceiveSats) })
 
-  // We need the scriptPubKey for the seller's receive address.
-  // For a native segwit address the script is OP_0 <20-byte-hash>.
-  // We derive it from the UTXO we already have (same address) or fetch it separately.
-  // Since this is a template, we embed a placeholder — the wallet will fill in details.
-  // In practice the backend fetches the seller's receive address script too.
-  tx.addOutput({
-    // Use the same script as the input (seller's address) — simplest valid approach
-    script: inputScript,
-    amount: BigInt(sellerReceiveSats),
-  })
-
-  // Output 1: protocol fee (only if address is set)
-  if (PROTOCOL_FEE_ADDRESS && protocolFeeSats >= DUST_SATS) {
-    // Fetch the protocol fee address scriptPubKey
-    // For simplicity we hard-code a P2WPKH script pattern; in production fetch it
-    // The wallet extension will validate this output regardless
-    const feeScript = buildP2wpkhScript(PROTOCOL_FEE_ADDRESS)
-    if (feeScript) {
-      tx.addOutput({ script: feeScript, amount: BigInt(protocolFeeSats) })
-    }
+  // Output 1: protocol fee (only present when address is configured and decodable)
+  if (feeScript && protocolFeeSats >= DUST_SATS) {
+    tx.addOutput({ script: feeScript, amount: BigInt(protocolFeeSats) })
   }
 
   const psbtBytes = tx.toPSBT()
@@ -153,7 +161,7 @@ export async function buildMakerPsbtTemplate(params: MakerPsbtParams): Promise<B
  * Returns the completed (unsigned taker side) PSBT for the buyer's wallet to sign.
  */
 export function completeTakerPsbt(params: TakerPsbtParams): BuiltPsbt {
-  const { makerPsbtHex, buyerAddress, buyerUtxos, feeRateSatPerVb } = params
+  const { makerPsbtHex, buyerUtxos, feeRateSatPerVb } = params
 
   const makerTx = Transaction.fromPSBT(hex.decode(makerPsbtHex))
 
@@ -180,22 +188,38 @@ export function completeTakerPsbt(params: TakerPsbtParams): BuiltPsbt {
     })
   }
 
-  // Output for taker: receives the token (Rune UTXO)
-  // For Runes: a 546-sat output tagged by the runestone OP_RETURN designates the recipient.
-  // We add a simple BTC output at the buyer's address to receive the Rune transfer.
-  const buyerScript = buildP2wpkhScript(buyerAddress) ?? buildP2trScript(buyerAddress)
-  if (!buyerScript) throw new Error('Could not derive script for buyer address')
+  // Output for taker: receives the token (Rune UTXO).
+  // scriptPubKey is fetched from mempool.space (via getTxOutput) by the caller — never derived
+  // locally, since bech32/bech32m decoding would require an additional dependency.
+  if (!params.buyerScriptPubKeyHex) throw new Error('buyerScriptPubKeyHex is required')
+  const buyerScript = hex.decode(params.buyerScriptPubKeyHex)
+
+  // Record the buyer's output index BEFORE adding it — the maker PSBT may have 1 output
+  // (seller BTC) or 2 outputs (seller BTC + protocol fee). The Runestone edict must point
+  // to whichever index the buyer's dust output lands at.
+  const buyerOutputIndex = makerTx.outputsLength
 
   makerTx.addOutput({
     script: buyerScript,
     amount: BigInt(DUST_SATS), // 546 sat minimum to hold Rune
   })
 
-  // Taker's BTC change output (buyer gets back the overpay)
+  // BTC change back to buyer
   const makerAsk = Number(makerTx.getOutput(0).amount ?? BigInt(0))
   const changeAmount = buyerTotal - makerAsk - takerFeeSats - DUST_SATS
   if (changeAmount > DUST_SATS) {
     makerTx.addOutput({ script: buyerScript, amount: BigInt(changeAmount) })
+  }
+
+  // For Rune orders: append a Runestone OP_RETURN directing the indexer to move
+  // `runeAmount` base units from input 0 → buyerOutputIndex.
+  // Without this the Runes are burned (cenotaph).
+  if (params.runeId && params.runeAmount) {
+    const parsed = parseRuneId(params.runeId)
+    if (parsed) {
+      const runestoneScript = buildRunestoneScript(parsed, BigInt(params.runeAmount), buyerOutputIndex)
+      makerTx.addOutput({ script: runestoneScript, amount: BigInt(0) })
+    }
   }
 
   const psbtBytes = makerTx.toPSBT()
@@ -230,31 +254,6 @@ export function validateMakerPsbt(psbtHex: string): { valid: boolean; error?: st
   } catch (e) {
     return { valid: false, error: `Invalid PSBT: ${e instanceof Error ? e.message : String(e)}` }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Script helpers — derive output scripts from addresses without full derivation
-// ---------------------------------------------------------------------------
-
-function buildP2wpkhScript(address: string): Uint8Array | null {
-  try {
-    // P2WPKH script: OP_0 <20-byte-hash>
-    // We can't trivially decode bech32 here without importing more libs,
-    // so we signal that the caller should fetch the script from mempool.space
-    // for maker outputs, and use this path only for well-known patterns.
-    // In production: use bitcoinjs-lib or @scure/btc-signer's address decoder.
-    if (!address.startsWith('bc1q') && !address.startsWith('tb1q')) return null
-    // @scure/btc-signer exposes p2wpkh but needs the raw pubkey hash, not the address.
-    // Return null and let callers fetch scriptPubKey from mempool.space instead.
-    return null
-  } catch {
-    return null
-  }
-}
-
-function buildP2trScript(address: string): Uint8Array | null {
-  if (!address.startsWith('bc1p') && !address.startsWith('tb1p')) return null
-  return null
 }
 
 /**

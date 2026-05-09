@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button'
 import { formatBTC, formatAmount } from '@/lib/utils'
 import { useWallet } from '@/hooks/useWallet'
 import { useWalletStore } from '@/store/wallet'
-import { broadcastTx, pollTxStatus } from '@/lib/mempool'
+import { broadcastTx, finalizeAndExtractTx, pollTxStatus } from '@/lib/mempool'
 import type { Order } from '@/lib/db/types'
 import { ExternalLink, X } from 'lucide-react'
 
@@ -53,9 +53,17 @@ export function TakeOrderModal({ order, fromTokenSymbol, toTokenSymbol, onClose 
       // 2. Ask the wallet to sign the taker inputs
       const signedPsbtHex = await signPsbt(psbtHex)
 
-      // 3. Broadcast
+      // 3. Finalize the PSBT and extract raw transaction bytes for mempool.space
       setStep('broadcasting')
-      const broadcastedTxid = await broadcastTx(signedPsbtHex)
+      const rawTxHex = finalizeAndExtractTx(signedPsbtHex)
+      const broadcastedTxid = await broadcastTx(rawTxHex)
+
+      // 4. Mark the order as filled now that broadcast succeeded
+      await fetch(`/api/orders/${order.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'filled' }),
+      })
 
       setTxid(broadcastedTxid)
       setTxStatus('mempool')

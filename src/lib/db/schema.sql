@@ -8,7 +8,7 @@ create table if not exists orders (
   maker_address   text not null,
   from_token_id   text not null,
   to_token_id     text not null,
-  from_amount     numeric not null,   -- token units (e.g. rune divisibility units)
+  from_amount     numeric not null,   -- display units (e.g. 1.5 DOG)
   to_amount       numeric not null,   -- satoshis (BTC asking price)
   psbt_hex        text not null,      -- maker's partially signed PSBT (hex)
   utxo_txid       text not null,      -- UTXO the maker is spending
@@ -16,8 +16,15 @@ create table if not exists orders (
   status          text not null default 'open'
                     check (status in ('open', 'filled', 'cancelled', 'expired')),
   created_at      timestamptz not null default now(),
-  expires_at      timestamptz not null
+  expires_at      timestamptz not null,
+  -- Rune-specific (null for BRC-20 orders)
+  rune_id         text,               -- e.g. "840000:3" — needed for Runestone encoding
+  rune_amount     text                -- exact base-unit amount as string (bigint-safe)
 );
+
+-- Migration for existing tables: add columns if they don't exist yet
+alter table orders add column if not exists rune_id     text;
+alter table orders add column if not exists rune_amount text;
 
 -- Index for fast order book queries (pair + open + not expired)
 create index if not exists orders_pair_status

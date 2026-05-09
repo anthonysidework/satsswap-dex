@@ -1,3 +1,7 @@
+import type { Order } from '@/lib/db/types'
+
+export type { Order }
+
 export type AssetType = 'BTC' | 'RUNE' | 'BRC20' | 'ORDINAL'
 
 export interface Token {
@@ -58,4 +62,24 @@ export interface SwapTransaction {
   psbtHex: string
   fee: number
   dex: string
+}
+
+/** Result from the /api/quotes order book fill endpoint */
+export interface MarketFill {
+  fromToken: Token
+  toToken: Token
+  fromAmount: number
+  /** True when at least one matching order exists in the book */
+  hasLiquidity: boolean
+  /** The specific order the taker will fill (null when no liquidity) */
+  bestOrder: Order | null
+  /** toToken units per fromToken unit */
+  rate: number
+  estimatedOutput: number
+  priceImpact: number
+  networkFeeSats: number
+  /** Unix ms — quote is valid until this time */
+  expiresAt: number
+  /** Human-readable reason when hasLiquidity is false */
+  message?: string
 }

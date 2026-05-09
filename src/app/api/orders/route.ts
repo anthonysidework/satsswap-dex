@@ -38,11 +38,13 @@ export async function POST(req: NextRequest) {
       fromTokenId,
       toTokenId,
       fromAmount,
-      toAmount,      // asking price in satoshis
+      toAmount,        // asking price in satoshis
       psbtHex,
       utxoTxid,
       utxoVout,
       expiresInHours = 24,
+      runeId = null,   // e.g. "840000:3" — only for RUNE type tokens
+      runeAmount = null, // base-unit amount as string
     } = body
 
     if (!makerAddress || !fromTokenId || !toTokenId || !fromAmount || !toAmount || !psbtHex || !utxoTxid) {
@@ -67,6 +69,8 @@ export async function POST(req: NextRequest) {
       utxo_txid: utxoTxid,
       utxo_vout: utxoVout ?? 0,
       expires_at: expiresAt,
+      rune_id: runeId,
+      rune_amount: runeAmount,
     })
 
     return NextResponse.json({ order }, { status: 201 })
