@@ -90,15 +90,19 @@ export function SwapSidebar({ initialTokens }: SwapSidebarProps) {
         </div>
       </div>
 
-      {/* Swap guide */}
+      {/* Guide */}
       <div className="bg-primary/5 border border-primary/20 rounded-2xl p-4">
-        <h4 className="text-primary font-semibold text-xs uppercase tracking-wide mb-2">How to swap</h4>
+        <h4 className="text-primary font-semibold text-xs uppercase tracking-wide mb-2">Market Order</h4>
         <ol className="text-text-secondary text-xs space-y-1 list-decimal list-inside leading-relaxed">
           <li>Connect your Bitcoin wallet (top-right)</li>
-          <li>Select tokens and enter an amount</li>
-          <li>We fetch quotes from 5 DEXes simultaneously</li>
-          <li>Review the best price, sign in your wallet</li>
+          <li>Select tokens and enter a BTC amount</li>
+          <li>We find the best open order in the book</li>
+          <li>Sign in your wallet — settles on Bitcoin L1</li>
         </ol>
+        <p className="text-text-muted text-xs mt-3">
+          Want to set your own price?{' '}
+          <a href="/dex" className="text-primary hover:underline">Place a limit order →</a>
+        </p>
       </div>
     </div>
   )

@@ -8,6 +8,13 @@ export default async function SwapPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-10">
+      <div className="mb-6">
+        <h1 className="text-text-primary text-2xl font-bold">Market Order</h1>
+        <p className="text-text-muted text-sm mt-1">
+          Instantly fill the best open order in the book — no limit price needed.{' '}
+          <a href="/dex" className="text-primary hover:underline">Place a limit order →</a>
+        </p>
+      </div>
       <div className="flex flex-col lg:flex-row gap-8 items-start">
         <div className="w-full lg:w-[460px] flex-shrink-0">
           {/* Suspense required by useSearchParams inside SwapCard */}

@@ -5,14 +5,6 @@ export const BTC_USD_PRICE = 77905
 
 export const PROTOCOL_FEE_BPS = 15
 
-export const SUPPORTED_DEXES = [
-  { name: 'Richswap', logo: 'R', color: '#F7931A' },
-  { name: 'Luminex', logo: 'L', color: '#9D4EDD' },
-  { name: 'OKX DEX', logo: 'O', color: '#00B4D8' },
-  { name: 'Unisat', logo: 'U', color: '#4361EE' },
-  { name: 'Magic Eden', logo: 'M', color: '#E83E8C' },
-]
-
 // CoinGecko CDN — stable image URLs confirmed 2026-04-23
 const CG = 'https://coin-images.coingecko.com/coins/images'
 

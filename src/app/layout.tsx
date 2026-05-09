@@ -5,13 +5,13 @@ import { Footer } from '@/components/layout/Footer'
 import { WalletModal } from '@/components/wallet/WalletModal'
 
 export const metadata: Metadata = {
-  title: 'SatsSwap — Best Price Across All Bitcoin DEXes',
+  title: 'SatsSwap — Trustless Order Book for Bitcoin Runes & BRC-20',
   description:
-    'Swap Bitcoin Ordinals, BRC-20 tokens, and Runes at the best available price. SatsSwap aggregates liquidity across Richswap, Luminex, OKX, Unisat, and Magic Eden.',
-  keywords: ['Bitcoin', 'Ordinals', 'Runes', 'BRC-20', 'DEX', 'Swap', 'Non-custodial'],
+    'Place and fill limit orders for Runes and BRC-20 tokens. Trustless PSBT settlement on Bitcoin L1. No escrow, no custody — your keys, your orders.',
+  keywords: ['Bitcoin', 'Runes', 'BRC-20', 'Order Book', 'DEX', 'PSBT', 'Non-custodial', 'Trustless'],
   openGraph: {
-    title: 'SatsSwap — Best Price Across All Bitcoin DEXes',
-    description: 'Non-custodial Bitcoin asset swaps. Best price, always.',
+    title: 'SatsSwap — Trustless Order Book for Bitcoin Runes & BRC-20',
+    description: 'Trustless PSBT order book. Place limit orders, fill instantly, settle on Bitcoin L1.',
     type: 'website',
   },
 }

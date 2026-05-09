@@ -19,27 +19,6 @@ export interface Token {
   logoUrl?: string
 }
 
-export interface DexQuote {
-  dex: string
-  dexLogo: string
-  rate: number
-  estimatedOutput: number
-  priceImpact: number
-  dexFee: number
-  networkFeeSats: number
-  isBest: boolean
-  liquidityUSD: number
-  isLive: boolean   // false = simulated quote, true = real DEX API
-}
-
-export interface AggregatedQuote {
-  fromToken: Token
-  toToken: Token
-  fromAmount: number
-  quotes: DexQuote[]
-  bestQuote: DexQuote
-  expiresAt: number
-}
 
 export interface WalletProvider {
   id: string
